@@ -80,7 +80,7 @@ def exctract_activity(sess, batch_points_all, model, data_sets_org):
 	return w_temp
 
 
-def print_accuracy(batch_points_test, data_sets, model, sess, j, acc_train_array):
+def get_accuracy(batch_points_test, data_sets, model, sess, j, acc_train_array):
 	"""Calc the test acc and print the train and test accuracy"""
 	acc_array = []
 	for i in range(0, len(batch_points_test) - 1):
@@ -90,8 +90,13 @@ def print_accuracy(batch_points_test, data_sets, model, sess, j, acc_train_array
 		acc = sess.run([model.accuracy],
 		               feed_dict=feed_dict_temp)
 		acc_array.append(acc)
-	print ('Epoch {0} - Test Accuracy: {1:.3f} Train Accuracy: {2:.3f}'.format(j, np.mean(np.array(acc_array)),
-	                                                                           np.mean(np.array(acc_train_array))))
+
+	train_acc = np.mean(np.array(acc_train_array))
+	test_acc = np.mean(np.array(acc_array))
+
+	# print('Epoch {0} - Test Accuracy: {1:.3f} Train Accuracy: {2:.3f}'.format(j, test_acc, train_acc))
+	
+	return train_acc, test_acc
 
 
 def train_network(layerSize, num_of_ephocs, learning_rate_local, batch_size, indexes, save_grads,
@@ -125,35 +130,39 @@ def train_network(layerSize, num_of_ephocs, learning_rate_local, batch_size, ind
 		sess.run(init)
 		# Go over the epochs
 		k = 0
-		acc_train_array = []
-		for j in range(0, num_of_ephocs):
+		for j in range(0, num_of_ephocs): # epoch iterations
 			epochs_grads = []
 			# Print accuracy
 			if np.mod(j, interval_accuracy_display) == 1 or interval_accuracy_display == 1:
-				print_accuracy(batch_points_test, data_sets, model, sess, j, acc_train_array)
+				train_acc, test_acc = get_accuracy(batch_points_test, data_sets, model, sess, j, acc_train_array)
+				print('Epoch {0} - Test Accuracy: {1:.3f} Train Accuracy: {2:.3f}'.format(j, test_acc, train_acc))
 			# Go over the batch_points
 			acc_train_array = []
 			current_weights = [[] for _ in range(len(model.weights_all))]
-			for i in range(0, len(batch_points) - 1):
-				batch_xs = data_sets.train.data[batch_points[i]:batch_points[i + 1]]
-				batch_ys = data_sets.train.labels[batch_points[i]:batch_points[i + 1]]
-				feed_dict = {model.x: batch_xs, model.labels: batch_ys}
+			for i in range(0, len(batch_points) - 1): # train with batches
+				train_batch_xs = data_sets.train.data[batch_points[i]:batch_points[i + 1]]
+				train_batch_ys = data_sets.train.labels[batch_points[i]:batch_points[i + 1]]
+				feed_dict = {model.x: train_batch_xs, model.labels: train_batch_ys}
 				_, tr_err = sess.run([optimizer, model.accuracy], feed_dict=feed_dict)
 				acc_train_array.append(tr_err)
-				if j in indexes:
+				if j in indexes: # logging steps?
 					epochs_grads_temp, loss_tr, weights_local = sess.run(
 						[grads, model.cross_entropy, model.weights_all],
 						feed_dict=feed_dict)
 					epochs_grads.append(epochs_grads_temp)
 					for ii in range(len(current_weights)):
 						current_weights[ii].append(weights_local[ii])
-			print(len(acc_train_array))
+
 			if j in indexes:
 				ws[k] = exctract_activity(sess, batch_points_all, model, data_sets_org)
-				# train_prediction.append(acc_train_array)
+				train_acc, test_acc = get_accuracy(batch_points_test, data_sets, model, sess, j, acc_train_array)
+				train_prediction[j] = train_acc
+				test_prediction[j] = test_acc
 				if save_grads:
 					gradients[k] = epochs_grads
 					current_weights_mean = []
+					print(len(current_weights[0]))
+					raise
 					for ii in range(len(current_weights)):
 						current_weights_mean.append(np.mean(np.array(current_weights[ii]), axis=0))
 					weights[k] = current_weights_mean
@@ -161,11 +170,7 @@ def train_network(layerSize, num_of_ephocs, learning_rate_local, batch_size, ind
 				write_meta = True if k == 0 else False
 				# saver.save(sess, model.save_file, global_step=k, write_meta_graph=write_meta)
 				k += 1
-	print(batch_points)
-	# print(len(acc_train_array[0])[0])
-	print(len(acc_train_array))
-	print(len(train_prediction))
-	raise
+
 	network = {}
 	network['ws'] = ws
 	network['test_prediction'] = test_prediction
