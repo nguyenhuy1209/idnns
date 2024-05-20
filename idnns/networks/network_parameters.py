@@ -175,7 +175,7 @@ def get_default_parser(num_of_samples=None):
     parser.add_argument(
         "-iad",
         dest="interval_accuracy_display",
-        default=499,
+        default=10,
         type=int,
         help="The interval for display accuracy",
     )

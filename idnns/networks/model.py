@@ -21,9 +21,11 @@ class Model(nn.Module):
         num_of_classes,
         save_file,
         covn_net,
+        is_regression,
     ):
         super(Model, self).__init__()
         self.save_file = save_file
+        self.is_regresion = is_regression
         layer_sizes = [input_size] + layer_sizes
         self.linears = nn.ModuleList(
             [
@@ -31,12 +33,14 @@ class Model(nn.Module):
                 for i in range(len(layer_sizes) - 1)
             ]
         )
-        self.last_layer = nn.Linear(layer_sizes[-1], num_of_classes)
-        # self.activation = nn.Tanh() if activation_function == 0 else nn.ReLU()
         self.activation = ACTIVATION_FUNCTION[activation_function]
-        self.softmax = nn.Softmax(
-            dim=1
-        )  # for MI calculation only, not for loss calculation
+        if is_regression:
+            self.last_layer = nn.Linear(layer_sizes[-1], 1)
+        else:
+            self.last_layer = nn.Linear(layer_sizes[-1], num_of_classes)
+            self.softmax = nn.Softmax(
+                dim=1
+            )  # for MI calculation only, not for loss calculation
 
     def forward(self, x):
         # x: shape (B, D)
@@ -47,7 +51,10 @@ class Model(nn.Module):
             layers.append(x)
 
         x = self.last_layer(x)
-        layers.append(self.softmax(x))
+        if self.is_regresion:
+            layers.append(x)
+        else:
+            layers.append(self.softmax(x))
 
         return x, layers
 

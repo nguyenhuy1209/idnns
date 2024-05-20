@@ -6,15 +6,15 @@ import warnings
 import numpy as np
 import torch
 import torch.nn as nn
-from torchmetrics import Accuracy
-from tqdm import tqdm
+from torchmetrics import Accuracy, MeanSquaredError
 
 from idnns.information import information_process as inn
 from idnns.networks import model as mo
 from idnns.networks.utils import data_shuffle, data_shuffle_pytorch
-from idnns.plots.utils import get_data
 
 warnings.filterwarnings("ignore")
+np.random.seed(0)
+
 summaries_dir = "summaries"
 NUM_CORES = multiprocessing.cpu_count()
 
@@ -89,6 +89,7 @@ def train_and_calc_inf_network(
     rand_int,
     cov_net,
     is_mnist,
+    is_regression,
 ):
     """Train the network and calculate it's information"""
     network_name = "{0}_{1}_{2}_{3}".format(i, j, k, rand_int)
@@ -107,17 +108,25 @@ def train_and_calc_inf_network(
         network_name,
         cov_net,
         is_mnist,
+        is_regression,
     )
     network["information"] = []
 
     if calc_information:
         print("Calculating the information")
+        if is_mnist or is_regression:
+            data = data_sets_org["sample_data"]
+            labels = data_sets_org["sample_label"]
+        else:
+            data = data_sets_org["data"]
+            labels = data_sets_org["labels"]
+
         infomration = np.array(
             [
                 inn.get_information(
                     network["ws"],
-                    data_sets_org["data"],
-                    data_sets_org["labels"],
+                    data,
+                    labels,
                     num_of_bins,
                     interval_information_display,
                     network["model"],
@@ -221,139 +230,6 @@ def get_accuracy(batch_points_test, data_sets, model, sess, j, acc_train_array):
     return train_acc, test_acc
 
 
-def train_network(
-    layerSize,
-    num_of_epochs,
-    learning_rate_local,
-    batch_size,
-    indexes,
-    save_grads,
-    data_sets_org,
-    model_type,
-    percent_of_train,
-    interval_accuracy_display,
-    name,
-    covn_net,
-):
-    """Train the nework"""
-    tf.compat.v1.reset_default_graph()
-    data_sets = data_shuffle(data_sets_org, percent_of_train)
-    ws, estimted_label, gradients, infomration, models, weights = [
-        [None] * len(indexes) for _ in range(6)
-    ]
-    loss_func_test, loss_func_train, test_prediction, train_prediction = [
-        np.zeros((len(indexes))) for _ in range(4)
-    ]
-    input_size = data_sets_org.data.shape[1]
-    num_of_classes = data_sets_org.labels.shape[1]
-    batch_size = np.min([batch_size, data_sets.train.data.shape[0]])
-    batch_points = np.rint(
-        np.arange(0, data_sets.train.data.shape[0] + 1, batch_size)
-    ).astype(dtype=np.int32)
-    batch_points_test = np.rint(
-        np.arange(0, data_sets.test.data.shape[0] + 1, batch_size)
-    ).astype(dtype=np.int32)
-    batch_points_all = np.rint(
-        np.arange(0, data_sets_org.data.shape[0] + 1, batch_size)
-    ).astype(dtype=np.int32)
-    if data_sets_org.data.shape[0] not in batch_points_all:
-        batch_points_all = np.append(batch_points_all, [data_sets_org.data.shape[0]])
-    if data_sets.train.data.shape[0] not in batch_points:
-        batch_points = np.append(batch_points, [data_sets.train.data.shape[0]])
-    if data_sets.test.data.shape[0] not in batch_points_test:
-        batch_points_test = np.append(batch_points_test, [data_sets.test.data.shape[0]])
-    # Build the network
-    model = build_model(
-        model_type,
-        layerSize,
-        input_size,
-        num_of_classes,
-        learning_rate_local,
-        name,
-        covn_net,
-    )
-    optimizer = model.optimize
-    saver = tf.compat.v1.train.Saver(max_to_keep=0)
-    init = tf.compat.v1.global_variables_initializer()
-    grads = tf.gradients(ys=model.cross_entropy, xs=tf.compat.v1.trainable_variables())
-    # Train the network
-    with tf.compat.v1.Session() as sess:
-        sess.run(init)
-        # Go over the epochs
-        k = 0
-        for j in range(0, num_of_epochs):  # epoch iterations
-            epochs_grads = []
-            if j in indexes:
-                ws[k] = exctract_activity(sess, batch_points_all, model, data_sets_org)
-            # Print accuracy
-            if (
-                np.mod(j, interval_accuracy_display) == 1
-                or interval_accuracy_display == 1
-            ):
-                train_acc, test_acc = get_accuracy(
-                    batch_points_test, data_sets, model, sess, j, acc_train_array
-                )
-                print(
-                    "Epoch {0} - Test Accuracy: {1:.3f} Train Accuracy: {2:.3f}".format(
-                        j, test_acc, train_acc
-                    )
-                )
-            # Go over the batch_points
-            acc_train_array = []
-            current_weights = [[] for _ in range(len(model.weights_all))]
-            for i in range(0, len(batch_points) - 1):  # train with batches
-                train_batch_xs = data_sets.train.data[
-                    batch_points[i] : batch_points[i + 1]
-                ]
-                train_batch_ys = data_sets.train.labels[
-                    batch_points[i] : batch_points[i + 1]
-                ]
-                feed_dict = {model.x: train_batch_xs, model.labels: train_batch_ys}
-                _, tr_err = sess.run([optimizer, model.accuracy], feed_dict=feed_dict)
-                acc_train_array.append(tr_err)
-                if j in indexes:  # logging steps?
-                    epochs_grads_temp, loss_tr, weights_local = sess.run(
-                        [grads, model.cross_entropy, model.weights_all],
-                        feed_dict=feed_dict,
-                    )
-                    # for grad in epochs_grads_temp:
-                    # 	print(grad.shape)
-                    # raise
-                    epochs_grads.append(epochs_grads_temp)
-                    for ii in range(len(current_weights)):
-                        current_weights[ii].append(weights_local[ii])
-
-            if j in indexes:
-                train_acc, test_acc = get_accuracy(
-                    batch_points_test, data_sets, model, sess, j, acc_train_array
-                )
-                train_prediction[k] = train_acc
-                test_prediction[k] = test_acc
-                if save_grads:
-                    gradients[k] = epochs_grads
-                    current_weights_mean = []
-                    for ii in range(len(current_weights)):
-                        current_weights_mean.append(
-                            np.mean(np.array(current_weights[ii]), axis=0)
-                        )
-                    weights[k] = current_weights_mean
-                # Save the model
-                # write_meta = True if k == 0 else False
-                # saver.save(sess, model.save_file, global_step=k, write_meta_graph=write_meta)
-                k += 1
-
-    network = {}
-    network["ws"] = ws
-    network["weights"] = weights
-    network["test_prediction"] = test_prediction
-    network["train_prediction"] = train_prediction
-    network["loss_test"] = loss_func_test
-    network["loss_train"] = loss_func_train
-    network["gradients"] = gradients
-    network["model"] = model
-    return network
-
-
 def train_network_pytorch(
     layerSize,
     num_of_epochs,
@@ -368,6 +244,7 @@ def train_network_pytorch(
     name,
     covn_net,
     is_mnist,
+    is_regression,
 ):
     # initialize data
     ws, estimted_label, gradients, information, models, weights = [
@@ -388,18 +265,25 @@ def train_network_pytorch(
         input_size,
         num_of_classes,
     ) = data_shuffle_pytorch(
-        data_sets_org, percent_of_train, batch_size, is_mnist=is_mnist
+        data_sets_org,
+        percent_of_train,
+        batch_size,
+        is_mnist=is_mnist,
+        is_regresion=is_regression,
     )
 
     # build model
     model = mo.Model(
-        model_type, layerSize, input_size, num_of_classes, name, covn_net
+        model_type, layerSize, input_size, num_of_classes, name, covn_net, is_regression
     ).to(device)
-
-    accuracy_metric = Accuracy(task="multiclass", num_classes=num_of_classes).to(device)
     print(model)
 
-    criterion = nn.CrossEntropyLoss()  # Softmax implemented internally
+    if is_regression:
+        criterion = nn.MSELoss()
+        metric = MeanSquaredError()
+    else:
+        criterion = nn.CrossEntropyLoss()  # Softmax implemented internally
+        metric = Accuracy(task="multiclass", num_classes=num_of_classes).to(device)
     optimizer = torch.optim.SGD(
         model.parameters(), lr=learning_rate_local, momentum=0.95
     )
@@ -416,8 +300,8 @@ def train_network_pytorch(
             np.mod(epoch, interval_accuracy_display) == 1
             or interval_accuracy_display == 1
         ):
-            train_acc, test_acc = get_accuracy_pytorch(
-                train_dataloader, test_dataloader, model, accuracy_metric, device
+            train_acc, test_acc = get_metric_pytorch(
+                train_dataloader, test_dataloader, model, metric, device, is_regression
             )
             print(
                 "Epoch {0} - Test Accuracy: {1:.3f} Train Accuracy: {2:.3f}".format(
@@ -440,8 +324,13 @@ def train_network_pytorch(
             optimizer.step()
 
         if epoch in indexes:
-            train_acc, test_acc = get_accuracy_pytorch(
-                train_dataloader, test_dataloader, model, accuracy_metric, device
+            train_acc, test_acc = get_metric_pytorch(
+                train_dataloader,
+                test_dataloader,
+                model,
+                metric,
+                device,
+                is_regression,
             )
             train_prediction[k] = train_acc
             test_prediction[k] = test_acc
@@ -486,8 +375,8 @@ def extract_activity_pytorch(dataloader, model, device):
     return w_temp
 
 
-def get_accuracy_pytorch(
-    train_dataloader, test_dataloader, model, accuracy_metric, device
+def get_metric_pytorch(
+    train_dataloader, test_dataloader, model, metric, device, is_regression
 ):
     model.to(device)
 
@@ -498,12 +387,13 @@ def get_accuracy_pytorch(
         labels = labels.to(device)
 
         outputs, _ = model(inputs)
-        outputs = torch.nn.functional.softmax(outputs, dim=1).argmax(dim=1)
-        labels = torch.nn.functional.softmax(labels, dim=1).argmax(dim=1)
+        if not is_regression:
+            outputs = torch.nn.functional.softmax(outputs, dim=1).argmax(dim=1)
+            labels = torch.nn.functional.softmax(labels, dim=1).argmax(dim=1)
 
-        accuracy_metric.update(outputs, labels)
-        train_acc.append(accuracy_metric.compute().detach().cpu().numpy())
-        accuracy_metric.reset()
+        metric.update(outputs, labels)
+        train_acc.append(metric.compute().detach().cpu().numpy())
+        metric.reset()
     train_acc = np.mean(train_acc)
 
     test_acc = []
@@ -513,12 +403,13 @@ def get_accuracy_pytorch(
         labels = labels.to(device)
 
         outputs, _ = model(inputs)
-        outputs = torch.nn.functional.softmax(outputs, dim=1).argmax(dim=1)
-        labels = torch.nn.functional.softmax(labels, dim=1).argmax(dim=1)
+        if not is_regression:
+            outputs = torch.nn.functional.softmax(outputs, dim=1).argmax(dim=1)
+            labels = torch.nn.functional.softmax(labels, dim=1).argmax(dim=1)
 
-        accuracy_metric.update(outputs, labels)
-        test_acc.append(accuracy_metric.compute().detach().cpu().numpy())
-        accuracy_metric.reset()
+        metric.update(outputs, labels)
+        test_acc.append(metric.compute().detach().cpu().numpy())
+        metric.reset()
     test_acc = np.mean(test_acc)
 
     return train_acc, test_acc

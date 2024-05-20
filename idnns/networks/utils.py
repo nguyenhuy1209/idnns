@@ -1,15 +1,18 @@
 import os
 import sys
 
-import numpy as np
-
-# from tensorflow.examples.tutorials.mnist import input_data
-
-np.set_printoptions(threshold=sys.maxsize)
 import idx2numpy
+import numpy as np
+import pandas as pd
 import scipy.io as sio
 import torch
+from sklearn.datasets import fetch_california_housing
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Dataset
+
+np.random.seed(0)
+np.set_printoptions(threshold=sys.maxsize)
 
 
 # Custom data
@@ -25,67 +28,41 @@ class CustomDataset(Dataset):
         return self.X[idx], self.y[idx]
 
 
-def load_data(name, random_labels=False):
-    """Load the data
-    name - the name of the dataset
-    random_labels - True if we want to return random labels to the dataset
-    return object with data and labels"""
-    print("Loading Data...")
-    C = type("type_C", (object,), {})
-    data_sets = C()
-    if name.split("/")[-1] == "MNIST":
-        train_images_file = (
-            os.path.dirname(sys.argv[0]) + "data/MNIST_data/train-images-idx3-ubyte"
-        )
-        train_label_file = (
-            os.path.dirname(sys.argv[0]) + "data/MNIST_data/train-labels-idx1-ubyte"
-        )
-        test_images_file = (
-            os.path.dirname(sys.argv[0]) + "data/MNIST_data/t10k-images-idx3-ubyte"
-        )
-        test_label_file = (
-            os.path.dirname(sys.argv[0]) + "data/MNIST_data/t10k-labels-idx1-ubyte"
-        )
-
-        train_images = idx2numpy.convert_from_file(train_images_file)
-        train_labels = idx2numpy.convert_from_file(train_label_file)
-        test_images = idx2numpy.convert_from_file(test_images_file)
-        test_labels = idx2numpy.convert_from_file(test_label_file)
-
-        # data_sets_temp = input_data.read_data_sets(os.path.dirname(sys.argv[0]) + "/data/MNIST_data/", one_hot=True)
-        data_sets.data = np.concatenate((train_images, test_images), axis=0)
-        data_sets.labels = np.concatenate((train_labels, test_labels), axis=0)
-        data_sets.data = np.reshape(data_sets.data, (-1, 784))
-        data_sets.labels = np.eye(10)[data_sets.labels]
-    else:
-        d = sio.loadmat(os.path.join(os.path.dirname(sys.argv[0]), name + ".mat"))
-        F = d["F"]
-        y = d["y"]
-        C = type("type_C", (object,), {})
-        data_sets = C()
-        data_sets.data = F
-        data_sets.labels = np.squeeze(
-            np.concatenate((y[None, :], 1 - y[None, :]), axis=0).T
-        )
-
-    # If we want to assign random labels to the  data
-    if random_labels:
-        labels = np.zeros(data_sets.labels.shape)
-        labels_index = np.random.randint(
-            low=0, high=labels.shape[1], size=labels.shape[0]
-        )
-        labels[np.arange(len(labels)), labels_index] = 1
-        data_sets.labels = labels
-    return data_sets
-
-
 def load_data_numpy(name, random_labels=False):
     """
     This function is the same as load_data() but return a dictionary of numpy arrays instead of "type_C" type
     """
     print("Loading Data...")
     datasets = {}
-    if name.split("/")[-1] == "MNIST":
+    if name.split("/")[-1] == "housing":
+        # Load the dataset
+        data = fetch_california_housing()
+        X = pd.DataFrame(data.data, columns=data.feature_names)
+        y = pd.DataFrame(data.target, columns=["MedianHouseValue"])
+
+        # Split the data into training and testing sets
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+
+        # Scale the features
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+
+        # Convert to PyTorch tensors
+        X_train = X_train_scaled
+        y_train = y_train.values
+        X_test = X_test_scaled
+        y_test = y_test.values
+
+        datasets["train_data"] = X_train
+        datasets["train_label"] = y_train
+        datasets["test_data"] = X_test
+        datasets["test_label"] = y_test
+        datasets["sample_data"] = np.concatenate((X_train, X_test), axis=0)
+        datasets["sample_label"] = np.concatenate((y_train, y_test), axis=0)
+    elif name.split("/")[-1] == "MNIST":
         train_images_file = (
             os.path.dirname(sys.argv[0]) + "data/MNIST/train-images-idx3-ubyte"
         )
@@ -113,6 +90,13 @@ def load_data_numpy(name, random_labels=False):
         datasets["train_label"] = train_labels
         datasets["test_data"] = test_images
         datasets["test_label"] = test_labels
+
+        half_samples = train_images.shape[0] // 2
+        indices = np.random.choice(train_images.shape[0], half_samples, replace=False)
+        train_images = train_images[indices, :]
+        train_labels = train_labels[indices, :]
+        datasets["sample_data"] = np.concatenate((train_images, test_images), axis=0)
+        datasets["sample_label"] = np.concatenate((train_labels, test_labels), axis=0)
     else:
         d = sio.loadmat(os.path.join(os.path.dirname(sys.argv[0]), name + ".mat"))
         F = d["F"].astype(np.float32)
@@ -175,11 +159,15 @@ def data_shuffle_pytorch(
     min_test_data=80,
     shuffle_data=False,
     is_mnist=False,
+    is_regresion=False,
 ):
     """Divided the data to train and test and shuffle it"""
-    if is_mnist:
+    if is_mnist or is_regresion:
         input_size = data_sets_org["train_data"].shape[1]
-        num_of_classes = len(np.unique(data_sets_org["train_label"], axis=0))
+        if is_regresion:
+            num_of_classes = 1
+        else:
+            num_of_classes = len(np.unique(data_sets_org["train_label"], axis=0))
 
         X_train, y_train = (
             data_sets_org["train_data"],
@@ -189,9 +177,9 @@ def data_shuffle_pytorch(
             data_sets_org["test_data"],
             data_sets_org["test_label"],
         )
-        X, y = np.concatenate((X_train, X_test), axis=0), np.concatenate(
-            (y_train, y_test), axis=0
-        )
+
+        X = data_sets_org["sample_data"]
+        y = data_sets_org["sample_label"]
 
     else:
         input_size = data_sets_org["data"].shape[1]
@@ -231,7 +219,7 @@ def data_shuffle_pytorch(
     all_data_dataloader = DataLoader(
         all_data_dataset, batch_size=batch_size, shuffle=False
     )
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     return (

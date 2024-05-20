@@ -9,7 +9,7 @@ from joblib import Parallel, delayed
 import idnns.networks.network as nn
 from idnns.information import information_process as inn
 from idnns.networks import network_parameters as netp
-from idnns.networks.utils import load_data, load_data_numpy
+from idnns.networks.utils import load_data_numpy
 from idnns.plots import plot_figures as plt_fig
 
 NUM_CORES = multiprocessing.cpu_count()
@@ -181,6 +181,7 @@ class informationNetwork:
 
         else:
             is_mnist = self.name.split("/")[-1] == "MNIST"
+            is_regression = self.name.split("/")[-1] == "housing"
             results = [
                 nn.train_and_calc_inf_network(
                     i,
@@ -204,6 +205,7 @@ class informationNetwork:
                     self.rand_int,
                     self.cov_net,
                     is_mnist,
+                    is_regression,
                 )
                 for i in range(len(self.train_samples))
                 for j in range(len(self.layers_sizes))
